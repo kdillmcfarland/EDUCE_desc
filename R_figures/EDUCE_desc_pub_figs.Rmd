@@ -1,0 +1,437 @@
+---
+title: "EDUCE descriptive publication data figures"
+author: "Kim Dill-McFarland"
+date: "version `r format(Sys.time(), '%B %d, %Y')`"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+# Setup
+## Load packages
+```{r message=FALSE}
+#Data manipulation and figures
+library(tidyverse)
+#Multi-panel figures
+library(cowplot)
+#Exact and Monte Carlo symmetry tests for paired contigency tables
+library(rcompanion)
+```
+
+## R session
+```{r}
+sessionInfo()
+```
+
+# Community of practice
+## Load data
+```{r}
+cop <- read_tsv("data_clean/2017.18.19_EDUCEteam.txt")
+cop
+```
+
+Calculate totals by career level (*e.g.* student, faculty, etc.) in each Department
+```{r}
+cop_sum <- cop %>% 
+  #Gather career levels into 1 column
+  gather(key="key", value="total", -dept, -fac) %>% 
+  #Remove NAs
+  filter(!is.na(total)) %>% 
+  #Sum totals of each career level in each department
+  group_by(key, dept, fac) %>% 
+  summarize(n=sum(total)) %>% 
+  #Reorder variables for plot
+  mutate(key_ord = factor(key, 
+                          levels=c("Undergraduate","Graduate",
+                                   "Postdoc","Instructor","Research",
+                                   "Staff"))) %>% 
+  mutate(dept_ord = factor(dept,
+                    levels=c("IAM","BOTA","Central","CPSC","ECE","LFS","MATH","MGEN","MICB","STAT"))) %>% 
+  mutate(fac_ord = factor(fac, levels=c("ASCI","LFS","MED","SCIE","Central")))
+```
+
+## Figure 3. EDUCE team members at UBC
+```{r}
+cop_plot <- cop_sum %>%
+  #Create variable for Science vs Other facets
+  mutate(fac_group = ifelse(fac == "SCIE", fac, "Other")) %>% 
+  #Reorder variable for facets
+  mutate(fac_group_ord = factor(fac_group, levels=c("SCIE","Other"))) %>% 
+  
+#Plot
+  ggplot() +
+  geom_bar(aes(x=key_ord, y=n, fill=dept_ord), stat="identity", width = 0.5) +
+  facet_grid(~fac_group_ord, scales = "free_x", space="free",
+             labeller = as_labeller(c("SCIE"="Faculty of Science",
+                          "Other"="Other"))) +
+  #Beautify
+  theme_classic() +
+  labs(x="Career level", y="Number of EDUCE\nteam members") +
+  theme(legend.key.height = unit(0.75, "cm"),
+        text=element_text(colour="black", size=10)) +
+  scale_x_discrete(labels=c("Staff" = "Staff",
+                            "Research"="Faculty\n(research)",
+                            "Instructor" = "Faculty\n(instructor)",
+                            "Postdoc" = "Postdoctoral\nfellow",
+                            "Graduate" = "Graduate\nstudent",
+                            "Undergraduate" = "Undergraduate\nstudent")) +
+  scale_fill_brewer(name = "Department", labels = c("Applied Mathematics",
+                                                    "Botany",
+                                                    "Centre for Teaching,\nLearning & Technology",
+                                                    "Computer Science",
+                                                    "Electrical & Computer\nEngineering",
+                                                    "Food Science",
+                                                    "Mathematics",
+                                                    "Medical Genetics",
+                                                    "Microbiology &\nImmunology",
+                                                    "Statistics"),
+                    palette = "RdBu") +
+  scale_y_continuous(breaks=c(0:6))
+
+cop_plot
+```
+
+Save Figure 3
+```{r}
+ggsave(filename="Fig3.pdf", plot=cop_plot, width=19.05, height=9, units = "cm")
+```
+
+\pagebreak
+
+# Student interest and experience
+## Load data
+```{r}
+survey <- read_csv("data_clean/2017.18.19_survey_clean.csv")
+```
+
+*Information on survey data clean-up can be found in `EDUCE_survey_cleanup`*
+
+## Survey question: How would you rate your **interest** in...
+### Monte Carlo symmetry tests for paired contingency tables
+Pre responses in columns, post responses in rows
+
+Data cleaning
+```{r}
+interest <- survey %>% 
+  # Select variables of interest
+  select(Course, year,
+         Pre_Interest_BI, Post_Interest_BI,
+         Pre_Interest_CPSC, Post_Interest_CPSC,
+         Pre_Interest_STAT, Post_Interest_STAT) %>% 
+  # Filter to just MICB301 course data
+  filter(Course == "MICB301") %>% 
+  # Convert numeric survey respones to groups
+  ## None=0, low=1-3, med=4-7, high=8-10
+  ### Create row ID to keep matched responses together
+  rowid_to_column() %>%
+  gather(key="key", value="value", 
+         -Course, -year, -rowid) %>% 
+  mutate(value = ifelse(value %in% c("0",0), "None",
+                     ifelse(value %in% c("1","2","3"), "Low",
+                     ifelse(value %in% c("4","5","6","7"), "Medium",
+                     ifelse(value %in% c("8","9","10"), "High",
+                     value))))) %>% 
+  group_by(rowid) %>% 
+  spread(key=key, value=value) %>% 
+  ungroup()
+```
+
+#### Bioinformatics
+Test for differences in pre- vs. post- matched surveys.
+```{r}
+BI_interest <- interest %>% 
+  # Select variables of interest
+  select(Pre_Interest_BI, Post_Interest_BI) %>% 
+  drop_na() %>% 
+  # Count matched pre-post response
+  group_by(Pre_Interest_BI, Post_Interest_BI) %>% 
+  summarize(n=n()) %>% 
+  # Format into contingency table
+  spread(Pre_Interest_BI, n) %>% 
+  replace(is.na(.), 0) %>% 
+  # add Pre=none
+  mutate(None=c(0,0,0,0)) %>% 
+  #Order variables
+  select(Post_Interest_BI, None, Low, Medium, High) %>% 
+  arrange(factor(Post_Interest_BI, levels = c("None", "Low", "Medium", "High"))) %>% 
+  column_to_rownames(var="Post_Interest_BI")
+  
+BI_interest
+
+nominalSymmetryTest(BI_interest, digits=5, method="fdr", MonteCarlo=TRUE, ntrial=10000)
+```
+
+#### Computer science
+Test for differences in pre- vs. post- matched surveys.
+```{r}
+CPSC_interest <- interest %>% 
+  # Select variables of interest
+  select(Pre_Interest_CPSC, Post_Interest_CPSC) %>% 
+  drop_na() %>% 
+  # Count matched pre-post response
+  group_by(Pre_Interest_CPSC, Post_Interest_CPSC) %>% 
+  summarize(n=n()) %>% 
+  # Format into contingency table
+  spread(Pre_Interest_CPSC, n) %>% 
+  replace(is.na(.), 0) %>% 
+  #Order variables
+  select(Post_Interest_CPSC, None, Low, Medium, High) %>% 
+  arrange(factor(Post_Interest_CPSC, levels = c("None", "Low", "Medium", "High"))) %>% 
+  column_to_rownames(var="Post_Interest_CPSC")
+
+CPSC_interest
+
+nominalSymmetryTest(CPSC_interest, digits=5, method="fdr", MonteCarlo=TRUE, ntrial=10000)
+```
+
+#### Statistics
+Test for differences in pre- vs. post- matched surveys.
+```{r}
+STAT_interest <- interest %>% 
+  # Select variables of interest
+  select(Pre_Interest_STAT, Post_Interest_STAT) %>% 
+  drop_na() %>% 
+  # Count matched pre-post response
+  group_by(Pre_Interest_STAT, Post_Interest_STAT) %>% 
+  summarize(n=n()) %>% 
+  # Format into contingency table
+  spread(Pre_Interest_STAT, n) %>% 
+  replace(is.na(.), 0) %>% 
+  # Add Pre=None
+  mutate(None=c(0,0,0,0)) %>% 
+  #Order variables
+  select(Post_Interest_STAT, None, Low, Medium, High) %>% 
+  arrange(factor(Post_Interest_STAT, levels = c("None", "Low", "Medium", "High"))) %>% 
+  column_to_rownames(var="Post_Interest_STAT")
+
+STAT_interest
+
+nominalSymmetryTest(STAT_interest, digits=5, method="fdr", MonteCarlo=TRUE, ntrial=10000)
+```
+
+### Interest plot
+Data cleaning
+```{r}
+plot_I_dat <- interest %>% 
+  #Gather pre/post data
+  gather("subject", "interest", -Course, -year, -rowid) %>% 
+  drop_na(interest) %>% 
+  # Create separate pre/post ID column
+  separate(subject, into=c("survey","trash","subject"), sep="_") %>% 
+  #Reorder groups
+  mutate(survey =  factor(survey, levels = c("Pre", "Post")),
+         interest = factor(interest, levels=c("High","Medium","Low","None"))) %>% 
+  #Remove trash column containing just "Interest" part of name
+  select(-trash) %>% 
+  # Calculate percentages of responses
+  group_by(Course, survey, subject, interest) %>% 
+  summarize(n=n()) %>% 
+  mutate(freq=100*n/sum(n))
+```
+
+Bar plot
+```{r}
+plot_I <- ggplot(plot_I_dat, 
+                 aes(x=survey, y=freq, fill=interest)) + 
+  geom_col(position = "fill", width=0.5) +
+  #Beautify
+  labs(x="Survey", y="Proportion of\nresponses", fill="") +
+  facet_grid(~subject, labeller = as_labeller(c("BI"="Bioinformatics\nP = 1.82E-2", 
+                                                "CPSC"="Computer science\n",
+                                                "STAT"="Statistics\n"))) +
+  theme_classic(base_size = 16) +
+  theme(text = element_text(size=13), 
+        panel.spacing = unit(2, "lines")) +
+  scale_x_discrete(labels=c("Pre","Post")) +
+  scale_fill_brewer(palette = "Blues", direction=-1,
+                    name="Interest") +
+  scale_y_continuous(labels=scales::percent)
+
+## Add significant arrows
+arrow_I_bi<-data.frame(
+  x = 1, y = 0.5, xend = 2, yend = 0.8, 
+  subject=factor("BI", levels=c("BI","CPSC","STAT")))
+
+plot_I <- plot_I + geom_segment(data=arrow_I_bi, aes(x=x, y=y, xend=xend, yend=yend), 
+               arrow = arrow(length = unit(0.03, "npc")),
+               inherit.aes = FALSE) 
+
+plot_I
+```
+
+## Survey question: What level of **experience** do you have in ...
+### Monte Carlo symmetry tests for paired contingency tables
+Pre responses in columns, post responses in rows
+
+Data cleaning
+```{r}
+exp <- survey %>% 
+  # Select variables of interest
+  select(Course, year,
+         Pre_Exp_BI, Post_Exp_BI,
+         Pre_Exp_CPSC, Post_Exp_CPSC,
+         Pre_Exp_STAT, Post_Exp_STAT) %>% 
+  # Filter to just MICB301 course data
+  filter(Course == "MICB301") %>% 
+  # Convert numeric survey respones to groups
+  ## None=0, low=1-3, med=4-7, high=8-10
+  ### Create row ID to keep matched responses together
+  rowid_to_column() %>%
+  gather(key="key", value="value", 
+         -Course, -year, -rowid) %>% 
+  mutate(value = ifelse(value == "0", "None",
+                     ifelse(value %in% c("1","2","3"), "Low",
+                     ifelse(value %in% c("4","5","6","7"), "Medium",
+                     ifelse(value %in% c("8","9","10"), "High",
+                     value))))) %>% 
+  #  Convert 1 "very high" response to "high"
+  mutate(value = ifelse(value=="veryHigh","High",value)) %>% 
+  #Spread back to wide format
+  group_by(rowid) %>% 
+  spread(key=key, value=value) %>% 
+  ungroup()
+```
+
+#### Bioinformatics
+Test for differences in pre- vs. post- matched surveys.
+```{r}
+BI_exp <- exp %>% 
+  # Select variables of exp
+  select(Pre_Exp_BI, Post_Exp_BI) %>% 
+  drop_na() %>% 
+  # Count matched pre-post response
+  group_by(Pre_Exp_BI, Post_Exp_BI) %>% 
+  summarize(n=n()) %>% 
+  # Format into contingency table
+  spread(Pre_Exp_BI, n) %>% 
+  replace(is.na(.), 0) %>% 
+  # Add data for Pre = High since none exist
+  mutate(High = c(0,0,0,0)) %>% 
+  #Order variables
+  select(Post_Exp_BI, None, Low, Medium, High) %>% 
+  arrange(factor(Post_Exp_BI, levels = c("None", "Low", "Medium", "High"))) %>% 
+  column_to_rownames(var="Post_Exp_BI")
+
+BI_exp
+
+nominalSymmetryTest(BI_exp, digits=5, method="fdr", MonteCarlo=TRUE, ntrial=10000)
+```
+
+#### Computer science
+Test for differences in pre- vs. post- matched surveys.
+```{r}
+CPSC_exp <- exp %>% 
+  # Select variables of interest
+  select(Pre_Exp_CPSC, Post_Exp_CPSC) %>% 
+  drop_na() %>% 
+  # Count matched pre-post response
+  group_by(Pre_Exp_CPSC, Post_Exp_CPSC) %>% 
+  summarize(n=n()) %>% 
+  # Format into contingency table
+  spread(Pre_Exp_CPSC, n) %>% 
+  replace(is.na(.), 0) %>% 
+  #Order variables
+  select(Post_Exp_CPSC, None, Low, Medium, High) %>% 
+  arrange(factor(Post_Exp_CPSC, levels = c("None", "Low", "Medium", "High"))) %>% 
+  column_to_rownames(var="Post_Exp_CPSC")
+
+CPSC_exp
+
+nominalSymmetryTest(CPSC_exp, digits=5, method="fdr", MonteCarlo=TRUE, ntrial=10000)
+```
+
+#### Statistics
+Test for differences in pre- vs. post- matched surveys.
+```{r}
+STAT_exp <- exp %>% 
+  # Select variables of interest
+  select(Pre_Exp_STAT, Post_Exp_STAT) %>% 
+  drop_na() %>% 
+  # Count matched pre-post response
+  group_by(Pre_Exp_STAT, Post_Exp_STAT) %>% 
+  summarize(n=n()) %>% 
+  # Format into contingency table
+  spread(Pre_Exp_STAT, n) %>% 
+  replace(is.na(.), 0) %>% 
+  # Add Pre = High data
+  mutate(High = c(0,0,0,0)) %>% 
+  #Order variables
+  select(Post_Exp_STAT, None, Low, Medium, High) %>% 
+  arrange(factor(Post_Exp_STAT, levels = c("None", "Low", "Medium", "High"))) %>% 
+  column_to_rownames(var="Post_Exp_STAT")
+
+STAT_exp
+
+nominalSymmetryTest(STAT_exp, digits=5, method="fdr", MonteCarlo=TRUE, ntrial=10000)
+```
+
+### Experience plot
+Data cleaning
+```{r}
+plot_E_dat <- exp %>% 
+  #Gather pre/post data
+  gather("subject", "exp", -Course, -year, -rowid) %>% 
+  drop_na() %>% 
+  # Create separate pre/post ID column
+  separate(subject, into=c("survey","trash","subject"), sep="_") %>% 
+  #Reorder groups
+  mutate(survey =  factor(survey, levels = c("Pre", "Post")),
+         exp = factor(exp, levels=c("veryHigh","High","Medium","Low","None"))) %>% 
+  #Remove trash column containing just "Interest" part of name
+  select(-trash) %>% 
+  # Calculate percentages of responses
+  group_by(Course, survey, subject, exp) %>% 
+  summarize(n=n()) %>% 
+  mutate(freq=100*n/sum(n)) 
+```
+
+Bar plot
+```{r}
+plot_E <- ggplot(plot_E_dat, aes(x=survey, y=freq)) + 
+  geom_col(aes(fill=exp), position = "fill", width=0.5) +
+  #Beautify
+  labs(x="Survey", y="Proportion of\nresponses", fill="") +
+  facet_grid(~subject, labeller = as_labeller(
+    c("BI"="Bioinformatics\nP < 0.03",
+      "CPSC"="Computer science\nP = 2.44E-3",
+      "STAT"="Statistics\n"))) +
+  theme_classic(base_size = 16) +
+  theme(text = element_text(size=13), 
+        panel.spacing = unit(2, "lines")) +
+  scale_x_discrete(labels=c("Pre","Post")) +
+  scale_fill_brewer(palette = "Blues", direction=-1,
+                    name="Experience") +
+  scale_y_continuous(labels=scales::percent)
+
+#Add arrows
+arrow_bi<-data.frame(
+  x=1,xend=2, y1=0.6,yend1=0.85, y2=0.2,yend2=0.35, y3=0.2,yend3=0.8, 
+  subject=factor("BI", levels=c("BI","CPSC","MICB")))
+
+arrow_cpsc<-data.frame(
+  x=1, xend=2, y=0.2,yend=0.4,
+  subject=factor("CPSC", levels=c("BI","CPSC","MICB")))
+
+plot_E <- plot_E +
+  geom_segment(data=arrow_bi, aes(x=x, y=y1, xend=xend, yend=yend1), 
+               arrow = arrow(length = unit(0.03, "npc"))) +
+  geom_segment(data=arrow_bi, aes(x=x, y=y2, xend=xend, yend=yend2), 
+               arrow = arrow(length = unit(0.03, "npc"))) +
+  geom_segment(data=arrow_bi, aes(x=x, y=y3, xend=xend, yend=yend3), 
+               arrow = arrow(length = unit(0.03, "npc"))) +
+  
+  geom_segment(data=arrow_cpsc, aes(x=x, y=y, xend=xend, yend=yend), 
+               arrow = arrow(length = unit(0.03, "npc")))
+
+plot_E
+```
+
+## Figure 4. Student interest and experience in data science
+Save composite figure
+
+```{r}
+fig4 <- plot_grid(plot_I, plot_E, labels = c("A", "B"), nrow = 2, align = "v")
+
+fig4
+
+ggsave(filename="Fig4.pdf", plot=fig4, width=19.05, height=14, units = "cm")
+```

@@ -1,0 +1,11 @@
+dept	fac	Undergraduate	Graduate	Postdoc	Research	Instructor	Staff
+MICB	SCIE		2	1	5	3	2
+MGEN	MED		2				
+IAM	ASCI		1				
+BOTA	SCIE		1	1			
+STAT	SCIE	2			1	1	1
+CPSC	SCIE	2					
+ECE	ASCI		1				
+MATH	SCIE					1	
+Central	Central						3
+LFS	LFS		1				
